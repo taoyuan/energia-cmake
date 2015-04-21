@@ -86,7 +86,7 @@ function(GENERATE_ENERGIA_LIBRARY INPUT_NAME)
         set(INPUT_MANUAL FALSE)
     endif()
     required_variables(VARS INPUT_SRCS INPUT_BOARD MSG "must define for target ${INPUT_NAME}")
-    
+
     set(ALL_LIBS)
     set(ALL_SRCS ${INPUT_SRCS} ${INPUT_HDRS})
 
@@ -186,8 +186,6 @@ function(GENERATE_ENERGIA_FIRMWARE INPUT_NAME)
     endif()
 
     list(APPEND ALL_LIBS ${CORE_LIB} ${INPUT_LIBS})
-
-    message(" - XXXXXX" ${LIB_DEP_INCLUDES})
 
     setup_energia_target(${INPUT_NAME} ${INPUT_BOARD} "${ALL_SRCS}" "${ALL_LIBS}" "${LIB_DEP_INCLUDES}" "" "${INPUT_MANUAL}")
 
@@ -511,6 +509,11 @@ function(REGISTER_HARDWARE_PLATFORM PLATFORM_PATH)
                     endif()
                 endforeach()
             endif()
+
+            foreach(board ${${PLATFORM}_BOARDS})
+                set(${board}.platform ${PLATFORM} CACHE INTERNAL "The ${board}'s platform")
+            endforeach()
+
         endif()
     endif()
 endfunction()
@@ -549,7 +552,23 @@ function(get_energia_flags COMPILE_FLAGS_VAR LINK_FLAGS_VAR BOARD_ID MANUAL)
 				set(COMPILE_FLAGS "${COMPILE_FLAGS} -I\"${LIBRARY_PATH}\"")
 			endforeach()
         endif()
+
         set(LINK_FLAGS "-mcpu=${${BOARD_ID}.build.mcu}")
+
+        # add ldscript to link flags if exists
+        if (${BOARD_ID}.ldscript)
+            if (NOT DEFINED ${BOARD_ID}.ldscript.path)
+               find_file(${BOARD_ID}.ldscript.path
+                        NAMES ${${BOARD_ID}.ldscript}
+                        PATHS ${${${BOARD_ID}.platform}_PLATFORM_PATH}
+                              ${${${BOARD_ID}.build.core}.path}
+                        DOC "${BOARD_ID}'s ldscript pth.")
+            endif()
+            if (${BOARD_ID}.ldscript.path)
+                set(LINK_FLAGS "${LINK_FLAGS} -T ${${BOARD_ID}.ldscript.path}")
+            endif()
+        endif()
+
         if(ENERGIA_VER VERSION_GREATER 15 OR ENERGIA_VER VERSION_EQUAL 15)
             if(NOT MANUAL)
                 set(PIN_HEADER ${${${BOARD_ID}.build.variant}.path})
@@ -559,7 +578,10 @@ function(get_energia_flags COMPILE_FLAGS_VAR LINK_FLAGS_VAR BOARD_ID MANUAL)
             endif()
         endif()
 
-        # output 
+        # add -c to tell compiler compile but not link
+        set(COMPILE_FLAGS "-c ${COMPILE_FLAGS}")
+
+        # output
         set(${COMPILE_FLAGS_VAR} "${COMPILE_FLAGS}" PARENT_SCOPE)
         set(${LINK_FLAGS_VAR} "${LINK_FLAGS}" PARENT_SCOPE)
 
@@ -818,41 +840,37 @@ function(setup_energia_target TARGET_NAME BOARD_ID ALL_SRCS ALL_LIBS COMPILE_FLA
 
     get_energia_flags(ENERGIA_COMPILE_FLAGS ENERGIA_LINK_FLAGS ${BOARD_ID} ${MANUAL})
 
+#    message("-- XXX " "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS}")
+#    message("-- YYY " "${ENERGIA_LINK_FLAGS} ${LINK_FLAGS}")
+
     set_target_properties(${TARGET_NAME} PROPERTIES
                 COMPILE_FLAGS "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS}"
                 LINK_FLAGS "${ENERGIA_LINK_FLAGS} ${LINK_FLAGS}")
-    target_link_libraries(${TARGET_NAME} ${ALL_LIBS} "-lc -lm")
+    target_link_libraries(${TARGET_NAME} ${ALL_LIBS} "-lc -lm -lgcc")
 
     if(NOT EXECUTABLE_OUTPUT_PATH)
       set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR})
     endif()
     set(TARGET_PATH ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME})
+    # Convert firmware image to BIN format
     add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
                         COMMAND ${CMAKE_OBJCOPY}
-                        ARGS     ${ENERGIA_OBJCOPY_EEP_FLAGS}
-                                 ${TARGET_PATH}.elf
-                                 ${TARGET_PATH}.eep
-                        COMMENT "Generating EEP image"
-                        VERBATIM)
-
-    # Convert firmware image to ASCII HEX format
-    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-                        COMMAND ${CMAKE_OBJCOPY}
-                        ARGS    ${ENERGIA_OBJCOPY_HEX_FLAGS}
+                        ARGS    ${ENERGIA_OBJCOPY_BIN_FLAGS}
                                 ${TARGET_PATH}.elf
-                                ${TARGET_PATH}.hex
-                        COMMENT "Generating HEX image"
+                                ${TARGET_PATH}.bin
+                        COMMENT "Generating BIN image"
                         VERBATIM)
 
     # Display target size
-    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-                        COMMAND ${CMAKE_COMMAND}
-                        ARGS    -DFIRMWARE_IMAGE=${TARGET_PATH}.elf
-                                -DMCU=${${BOARD_ID}.build.mcu}
-                                -DEEPROM_IMAGE=${TARGET_PATH}.eep
-                                -P ${ENERGIA_SIZE_SCRIPT}
-                        COMMENT "Calculating image size"
-                        VERBATIM)
+    # TODO
+#    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+#                        COMMAND ${CMAKE_COMMAND}
+#                        ARGS    -DFIRMWARE_IMAGE=${TARGET_PATH}.elf
+#                                -DMCU=${${BOARD_ID}.build.mcu}
+#                                -DEEPROM_IMAGE=${TARGET_PATH}.eep
+#                                -P ${ENERGIA_SIZE_SCRIPT}
+#                        COMMENT "Calculating image size"
+#                        VERBATIM)
 
     # Create ${TARGET_NAME}-size target
 #    add_custom_target(${TARGET_NAME}-size
@@ -863,6 +881,143 @@ function(setup_energia_target TARGET_NAME BOARD_ID ALL_SRCS ALL_LIBS COMPILE_FLA
 #                                -P ${ENERGIA_SIZE_SCRIPT}
 #                        DEPENDS ${TARGET_NAME}
 #                        COMMENT "Calculating ${TARGET_NAME} image size")
+
+endfunction()
+
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# setup_energia_upload(BOARD_ID TARGET_NAME PORT)
+#
+#        BOARD_ID    - Arduino board id
+#        TARGET_NAME - Target name
+#        PORT        - Serial port for upload
+#        PROGRAMMER_ID - Programmer ID
+#        UPLOAD_FLAGS - avrdude flags
+#
+# Create an upload target (${TARGET_NAME}-upload) for the specified Arduino target.
+#
+#=============================================================================#
+function(setup_energia_upload BOARD_ID TARGET_NAME PORT PROGRAMMER_ID UPLOAD_FLAGS)
+#    message(" - XXX " ${TARGET_NAME})
+#    message(" - XXX " ${BOARD_ID})
+#    message(" - XXX " ${PROGRAMMER_ID})
+#    message(" - XXX " ${PORT})
+#    message(" - XXX " ${UPLOAD_FLAGS})
+    setup_energia_programmer_burn(${TARGET_NAME} ${BOARD_ID} ${PROGRAMMER_ID} ${PORT} "${UPLOAD_FLAGS}")
+endfunction()
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# setup_energia_programmer_burn(TARGET_NAME BOARD_ID PROGRAMMER PORT UPLOAD_FLAGS)
+#
+#      TARGET_NAME - name of target to burn
+#      BOARD_ID    - board id
+#      PROGRAMMER  - programmer id
+#      PORT        - serial port
+#      UPLOAD_FLAGS - upload flags (override)
+#
+# Sets up target for burning firmware via a programmer.
+#
+# The target for burning the firmware is ${TARGET_NAME}-burn .
+#
+#=============================================================================#
+function(setup_energia_programmer_burn TARGET_NAME BOARD_ID PROGRAMMER PORT UPLOAD_FLAGS)
+
+    set(PROGRAMMER_TARGET ${TARGET_NAME}-burn)
+
+    set(UPLOAD_TOOL "cc3200prog")
+    if (${BOARD_ID}.upload.tool)
+        set(UPLOAD_TOOL ${${BOARD_ID}.upload.tool})
+    endif()
+
+    message(" - XXX " UPLOAD_TOOL)
+
+    find_program(UPLOAD_PROGRAM
+        NAMES ${UPLOAD_TOOL}
+        PATHS ${ENERGIA_SDK_PATH}
+        PATH_SUFFIXES hardware/tools hardware/tools/lm4f/bin
+        NO_DEFAULT_PATH)
+
+    if (NOT UPLOAD_PROGRAM)
+        message("Could not find upload program \"${UPLOAD_TOOL}\", aborting!")
+        return()
+    endif()
+
+    GET_FILENAME_COMPONENT(WORKING_DIRECTORY ${UPLOAD_PROGRAM} DIRECTORY)
+
+    set(UPLOAD_ARGS)
+
+    setup_energia_programmer_args(${BOARD_ID} ${PROGRAMMER} ${TARGET_NAME} ${PORT} "${UPLOAD_FLAGS}" UPLOAD_ARGS)
+
+    if(NOT UPLOAD_ARGS)
+        message("Could not generate default avrdude programmer args, aborting!")
+        return()
+    endif()
+
+    if(NOT EXECUTABLE_OUTPUT_PATH)
+      set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR})
+    endif()
+    set(TARGET_PATH ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME})
+
+    list(APPEND UPLOAD_ARGS "${TARGET_PATH}.bin")
+
+    add_custom_target(${PROGRAMMER_TARGET}
+                     ${UPLOAD_PROGRAM}
+                     ${UPLOAD_ARGS}
+                     WORKING_DIRECTORY ${WORKING_DIRECTORY}
+                     DEPENDS ${TARGET_NAME})
+endfunction()
+
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# setup_energia_programmer_args(BOARD_ID PROGRAMMER TARGET_NAME PORT UPLOAD_FLAGS OUTPUT_VAR)
+#
+#      BOARD_ID    - board id
+#      PROGRAMMER  - programmer id
+#      TARGET_NAME - target name
+#      PORT        - serial port
+#      UPLOAD_FLAGS - avrdude flags (override)
+#      OUTPUT_VAR  - name of output variable for result
+#
+# Sets up default avrdude settings for burning firmware via a programmer.
+#=============================================================================#
+function(setup_energia_programmer_args BOARD_ID PROGRAMMER TARGET_NAME PORT UPLOAD_FLAGS OUTPUT_VAR)
+    set(UPLOAD_ARGS ${${OUTPUT_VAR}})
+
+#    if(NOT UPLOAD_FLAGS)
+#        set(UPLOAD_FLAGS ${ENERGIA_UPLOAD_FLAGS})
+#    endif()
+#
+#    list(APPEND UPLOAD_ARGS "-C${ARDUINO_AVRDUDE_CONFIG_PATH}")
+#
+#    #TODO: Check mandatory settings before continuing
+#    if(NOT ${PROGRAMMER}.protocol)
+#        message(FATAL_ERROR "Missing ${PROGRAMMER}.protocol, aborting!")
+#    endif()
+#
+#    list(APPEND UPLOAD_ARGS "-c${${PROGRAMMER}.protocol}") # Set programmer
+
+
+    list(APPEND UPLOAD_ARGS "${PORT}") # Set port
+
+#    if(${PROGRAMMER}.force)
+#        list(APPEND UPLOAD_ARGS "-F") # Set forc
+#    endif()
+#
+#    if(${PROGRAMMER}.delay)
+#        list(APPEND UPLOAD_ARGS "-i${${PROGRAMMER}.delay}") # Set delay
+#    endif()
+#
+#    list(APPEND UPLOAD_ARGS "-p${${BOARD_ID}.build.mcu}")  # MCU Type
+#
+#    list(APPEND UPLOAD_ARGS ${UPLOAD_FLAGS})
+
+    set(${OUTPUT_VAR} ${UPLOAD_ARGS} PARENT_SCOPE)
 
 endfunction()
 
@@ -937,6 +1092,98 @@ endfunction()
 
 
 
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# SETUP_SIZE_SCRIPT(OUTPUT_VAR)
+#
+#        OUTPUT_VAR - Output variable that will contain the script path
+#
+# Generates script used to display the firmware size.
+#=============================================================================#
+### !!! NOT WORK NOW !!!
+#function(SETUP_SIZE_SCRIPT OUTPUT_VAR)
+#    set(SIZE_SCRIPT_PATH ${CMAKE_BINARY_DIR}/CMakeFiles/FirmwareSize.cmake)
+#
+#    file(WRITE ${SIZE_SCRIPT_PATH} "
+#        set(SIZE_FLAGS "")
+#
+#        execute_process(COMMAND \${SIZE_PROGRAM} \${SIZE_FLAGS} \${FIRMWARE_IMAGE} \${EEPROM_IMAGE}
+#                        OUTPUT_VARIABLE SIZE_OUTPUT)
+#
+#
+#        string(STRIP \"\${SIZE_OUTPUT}\" RAW_SIZE_OUTPUT)
+#
+#        # Convert lines into a list
+#        string(REPLACE \"\\n\" \";\" SIZE_OUTPUT_LIST \"\${SIZE_OUTPUT}\")
+#
+#        set(SIZE_OUTPUT_LINES)
+#        foreach(LINE \${SIZE_OUTPUT_LIST})
+#            if(NOT \"\${LINE}\" STREQUAL \"\")
+#                list(APPEND SIZE_OUTPUT_LINES \"\${LINE}\")
+#            endif()
+#        endforeach()
+#
+#        function(EXTRACT LIST_NAME INDEX VARIABLE)
+#            list(GET \"\${LIST_NAME}\" \${INDEX} RAW_VALUE)
+#            string(STRIP \"\${RAW_VALUE}\" VALUE)
+#
+#            set(\${VARIABLE} \"\${VALUE}\" PARENT_SCOPE)
+#        endfunction()
+#        function(PARSE INPUT VARIABLE_PREFIX)
+#            if(\${INPUT} MATCHES \"([^:]+):[ \\t]*([0-9]+)[ \\t]*([^ \\t]+)[ \\t]*[(]([0-9.]+)%.*\")
+#                set(ENTRY_NAME      \${CMAKE_MATCH_1})
+#                set(ENTRY_SIZE      \${CMAKE_MATCH_2})
+#                set(ENTRY_SIZE_TYPE \${CMAKE_MATCH_3})
+#                set(ENTRY_PERCENT   \${CMAKE_MATCH_4})
+#            endif()
+#
+#            set(\${VARIABLE_PREFIX}_NAME      \${ENTRY_NAME}      PARENT_SCOPE)
+#            set(\${VARIABLE_PREFIX}_SIZE      \${ENTRY_SIZE}      PARENT_SCOPE)
+#            set(\${VARIABLE_PREFIX}_SIZE_TYPE \${ENTRY_SIZE_TYPE} PARENT_SCOPE)
+#            set(\${VARIABLE_PREFIX}_PERCENT   \${ENTRY_PERCENT}   PARENT_SCOPE)
+#        endfunction()
+#
+#        list(LENGTH SIZE_OUTPUT_LINES SIZE_OUTPUT_LENGTH)
+#        #message(\"\${SIZE_OUTPUT_LINES}\")
+#        #message(\"\${SIZE_OUTPUT_LENGTH}\")
+#        if (\${SIZE_OUTPUT_LENGTH} STREQUAL 14)
+#            EXTRACT(SIZE_OUTPUT_LINES 3 FIRMWARE_PROGRAM_SIZE_ROW)
+#            EXTRACT(SIZE_OUTPUT_LINES 5 FIRMWARE_DATA_SIZE_ROW)
+#            PARSE(FIRMWARE_PROGRAM_SIZE_ROW FIRMWARE_PROGRAM)
+#            PARSE(FIRMWARE_DATA_SIZE_ROW  FIRMWARE_DATA)
+#
+#            set(FIRMWARE_STATUS \"Firmware Size: \")
+#            set(FIRMWARE_STATUS \"\${FIRMWARE_STATUS} [\${FIRMWARE_PROGRAM_NAME}: \${FIRMWARE_PROGRAM_SIZE} \${FIRMWARE_PROGRAM_SIZE_TYPE} (\${FIRMWARE_PROGRAM_PERCENT}%)] \")
+#            set(FIRMWARE_STATUS \"\${FIRMWARE_STATUS} [\${FIRMWARE_DATA_NAME}: \${FIRMWARE_DATA_SIZE} \${FIRMWARE_DATA_SIZE_TYPE} (\${FIRMWARE_DATA_PERCENT}%)]\")
+#            set(FIRMWARE_STATUS \"\${FIRMWARE_STATUS} on \${MCU}\")
+#
+#            EXTRACT(SIZE_OUTPUT_LINES 10 EEPROM_PROGRAM_SIZE_ROW)
+#            EXTRACT(SIZE_OUTPUT_LINES 12 EEPROM_DATA_SIZE_ROW)
+#            PARSE(EEPROM_PROGRAM_SIZE_ROW EEPROM_PROGRAM)
+#            PARSE(EEPROM_DATA_SIZE_ROW  EEPROM_DATA)
+#
+#            set(EEPROM_STATUS \"EEPROM   Size: \")
+#            set(EEPROM_STATUS \"\${EEPROM_STATUS} [\${EEPROM_PROGRAM_NAME}: \${EEPROM_PROGRAM_SIZE} \${EEPROM_PROGRAM_SIZE_TYPE} (\${EEPROM_PROGRAM_PERCENT}%)] \")
+#            set(EEPROM_STATUS \"\${EEPROM_STATUS} [\${EEPROM_DATA_NAME}: \${EEPROM_DATA_SIZE} \${EEPROM_DATA_SIZE_TYPE} (\${EEPROM_DATA_PERCENT}%)]\")
+#            set(EEPROM_STATUS \"\${EEPROM_STATUS} on \${MCU}\")
+#
+#            message(\"\${FIRMWARE_STATUS}\")
+#            message(\"\${EEPROM_STATUS}\\n\")
+#
+#            if(\$ENV{VERBOSE})
+#                message(\"\${RAW_SIZE_OUTPUT}\\n\")
+#            elseif(\$ENV{VERBOSE_SIZE})
+#                message(\"\${RAW_SIZE_OUTPUT}\\n\")
+#            endif()
+#        else()
+#            message(\"\${RAW_SIZE_OUTPUT}\")
+#        endif()
+#    ")
+#
+#    set(${OUTPUT_VAR} ${SIZE_SCRIPT_PATH} PARENT_SCOPE)
+#endfunction()
 
 
 #=============================================================================#
@@ -1066,11 +1313,11 @@ endfunction()
 if (NOT DEFINED ENERGIA_C_FLAGS)
     set(ENERGIA_C_FLAGS "-ffunction-sections -fdata-sections -mthumb")
 endif (NOT DEFINED ENERGIA_C_FLAGS)
-set(CMAKE_C_FLAGS                   "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRING "" FORCE)
-set(CMAKE_C_FLAGS_DEBUG             "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
-set(CMAKE_C_FLAGS_MINSIZEREL        "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
-set(CMAKE_C_FLAGS_RELEASE           "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO    "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
+set(CMAKE_C_FLAGS                   "-Os -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
+set(CMAKE_C_FLAGS_DEBUG             "-Os -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
+set(CMAKE_C_FLAGS_MINSIZEREL        "-Os -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
+set(CMAKE_C_FLAGS_RELEASE           "-Os -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO    "-Os -w   ${ENERGIA_C_FLAGS}" CACHE STRING "")
 
 #=============================================================================#
 #                             C++ Flags
@@ -1078,11 +1325,44 @@ set(CMAKE_C_FLAGS_RELWITHDEBINFO    "-Os -c  -w   ${ENERGIA_C_FLAGS}" CACHE STRI
 if (NOT DEFINED ENERGIA_CXX_FLAGS)
     set(ENERGIA_CXX_FLAGS "${ENERGIA_C_FLAGS} -fno-rtti -fno-exceptions")
 endif (NOT DEFINED ENERGIA_CXX_FLAGS)
-set(CMAKE_CXX_FLAGS                 "-c -Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS_DEBUG           "-c -Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
-set(CMAKE_CXX_FLAGS_MINSIZEREL      "-c -Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
-set(CMAKE_CXX_FLAGS_RELEASE         "-c -Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO  "-c -Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+set(CMAKE_CXX_FLAGS                 "-Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_DEBUG           "-Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_MINSIZEREL      "-Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_RELEASE         "-Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO  "-Os -w    ${ENERGIA_CXX_FLAGS}" CACHE STRING "")
+
+#=============================================================================#
+#                       Executable Linker Flags                               #
+#=============================================================================#
+set(ENERGIA_LINKER_FLAGS "-Os -nostartfiles -nostdlib -Wl,--gc-sections -Wl,--entry=ResetISR -mthumb")
+set(CMAKE_EXE_LINKER_FLAGS                "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG          "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_EXE_LINKER_FLAGS_MINSIZEREL     "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE        "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+
+#=============================================================================#
+#=============================================================================#
+#                       Shared Lbrary Linker Flags                            #
+#=============================================================================#
+set(CMAKE_SHARED_LINKER_FLAGS                "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS_DEBUG          "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS_MINSIZEREL     "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE        "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+
+set(CMAKE_MODULE_LINKER_FLAGS                "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_MODULE_LINKER_FLAGS_DEBUG          "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_MODULE_LINKER_FLAGS_MINSIZEREL     "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_MODULE_LINKER_FLAGS_RELEASE        "${ENERGIA_LINKER_FLAGS}" CACHE STRING "")
+set(CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO "${ARDUINO_LINKER_FLAGS}" CACHE STRING "")
+
+#=============================================================================#
+#                         Arduino Settings
+#=============================================================================#
+set(ENERGIA_OBJCOPY_BIN_FLAGS -O binary     CACHE STRING "")
+set(ENERGIA_UPLOAD_FLAGS ""                 CACHE STRING "")
+
 
 #=============================================================================#
 #                          Initialization
@@ -1147,8 +1427,12 @@ if(NOT ENERGIA_FOUND AND ENERGIA_SDK_PATH)
 #        NAMES avrdude
 #        DOC "Path to avrdude programmer binary.")
 #
-#    find_program(AVRSIZE_PROGRAM
-#        NAMES avr-size)
+    # TODO costom size_program by board
+    find_program(SIZE_PROGRAM
+        NAMES arm-none-eabi-size
+        PATHS ${ENERGIA_SDK_PATH}
+        PATH_SUFFIXES hardware/tools
+                      hardware/tools/lm4f/bin)
 #
 #    find_file(ENERGIA_AVRDUDE_CONFIG_PATH
 #        NAMES avrdude.conf
@@ -1160,9 +1444,9 @@ if(NOT ENERGIA_FOUND AND ENERGIA_SDK_PATH)
 
 
     set(ENERGIA_DEFAULT_BOARD lpcc3200  CACHE STRING "Default Energia Board ID when not specified.")
-    set(ENERGIA_DEFAULT_PORT       CACHE STRING "Default Energia port when not specified.")
-    set(ENERGIA_DEFAULT_SERIAL     CACHE STRING "Default Energia Serial command when not specified.")
-    set(ENERGIA_DEFAULT_PROGRAMMER CACHE STRING "Default Energia Programmer ID when not specified.")
+    set(ENERGIA_DEFAULT_PORT            CACHE STRING "Default Energia port when not specified.")
+    set(ENERGIA_DEFAULT_SERIAL          CACHE STRING "Default Energia Serial command when not specified.")
+    set(ENERGIA_DEFAULT_PROGRAMMER "UNKNOWN"   CACHE STRING "Default Energia Programmer ID when not specified.")
 
     # Cahce ENERGIA_LIBRARIES_PATH
     set(ENERGIA_LIBRARIES_PATH ${ENERGIA_LIBRARIES_PATH} CACHE PATH "The Energia libraries path")
@@ -1174,6 +1458,7 @@ if(NOT ENERGIA_FOUND AND ENERGIA_SDK_PATH)
         ${ENERGIA_PLATFORM}_BOARDS_PATH
         ENERGIA_LIBRARIES_PATH
         ENERGIA_VERSION_PATH
+        SIZE_PROGRAM
         MSG "Invalid Energia SDK path (${ENERGIA_SDK_PATH}).\n")
 
     detect_energia_version(ENERGIA_SDK_VERSION)
@@ -1199,5 +1484,6 @@ if(NOT ENERGIA_FOUND AND ENERGIA_SDK_PATH)
         ${ENERGIA_PLATFORM}_CORES_PATH
         ${ENERGIA_PLATFORM}_BOARDS_PATH
         ENERGIA_LIBRARIES_PATH
-        ENERGIA_VERSION_PATH)
+        ENERGIA_VERSION_PATH
+        SIZE_PROGRAM)
 endif()
