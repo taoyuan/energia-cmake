@@ -111,6 +111,8 @@ function(GENERATE_ENERGIA_LIBRARY INPUT_NAME)
 
     get_energia_flags(ENERGIA_COMPILE_FLAGS ENERGIA_LINK_FLAGS  ${INPUT_BOARD} ${INPUT_MANUAL})
 
+#    message(" - XXX " "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS} ${LIB_DEP_INCLUDES}")
+
     set_target_properties(${INPUT_NAME} PROPERTIES
                 COMPILE_FLAGS "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS} ${LIB_DEP_INCLUDES}"
                 LINK_FLAGS "${ENERGIA_LINK_FLAGS} ${LINK_FLAGS}")
@@ -151,7 +153,6 @@ function(GENERATE_ENERGIA_FIRMWARE INPUT_NAME)
     set(ALL_LIBS)
     set(ALL_SRCS ${INPUT_SRCS} ${INPUT_HDRS})
     set(LIB_DEP_INCLUDES)
-#    set(LIB_DEP_DIRS)
 
     if(NOT INPUT_MANUAL)
       setup_energia_core(CORE_LIB ${INPUT_BOARD})
@@ -174,7 +175,7 @@ function(GENERATE_ENERGIA_FIRMWARE INPUT_NAME)
 
     foreach(LIB_DEP ${TARGET_LIBS})
         energia_debug_msg("Energia Library: ${LIB_DEP}")
-        set(LIB_DEP_INCLUDES "${LIB_DEP_INCLUDES} -I\"${LIB_DEP}\"")
+        set(LIB_DEP_INCLUDES "${LIB_DEP_INCLUDES} -I\"${LIB_DEP}\" -I\"${LIB_DEP}/utility\"")
     endforeach()
 
     if(NOT INPUT_NO_AUTOLIBS)
@@ -681,6 +682,7 @@ function(find_energia_libraries VAR_NAME SRCS ARDLIBS)
                     get_property(LIBRARY_SEARCH_PATH
                                  DIRECTORY     # Property Scope
                                  PROPERTY LINK_DIRECTORIES)
+
                     foreach(LIB_SEARCH_PATH ${LIBRARY_SEARCH_PATH} ${ENERGIA_LIBRARIES_PATH} ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/libraries ${ENERGIA_EXTRA_LIBRARIES_PATH})
 
                         if(EXISTS ${LIB_SEARCH_PATH}/${INCLUDE_NAME}/${CMAKE_MATCH_1})
@@ -726,10 +728,10 @@ set(Wire_RECURSE True)
 set(Ethernet_RECURSE True)
 set(SD_RECURSE True)
 set(WiFi_RECURSE True)
+#set(OxMqtt_RECURSE True)
 function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLAGS)
     set(LIB_TARGETS)
     set(LIB_INCLUDES)
-
 
     get_filename_component(LIB_NAME ${LIB_PATH} NAME)
 
@@ -836,12 +838,10 @@ endfunction()
 function(setup_energia_target TARGET_NAME BOARD_ID ALL_SRCS ALL_LIBS COMPILE_FLAGS LINK_FLAGS MANUAL)
 
     add_executable(${TARGET_NAME} ${ALL_SRCS})
+
     set_target_properties(${TARGET_NAME} PROPERTIES SUFFIX ".elf")
 
     get_energia_flags(ENERGIA_COMPILE_FLAGS ENERGIA_LINK_FLAGS ${BOARD_ID} ${MANUAL})
-
-#    message("-- XXX " "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS}")
-#    message("-- YYY " "${ENERGIA_LINK_FLAGS} ${LINK_FLAGS}")
 
     set_target_properties(${TARGET_NAME} PROPERTIES
                 COMPILE_FLAGS "${ENERGIA_COMPILE_FLAGS} ${COMPILE_FLAGS}"
@@ -932,8 +932,6 @@ function(setup_energia_programmer_burn TARGET_NAME BOARD_ID PROGRAMMER PORT UPLO
     if (${BOARD_ID}.upload.tool)
         set(UPLOAD_TOOL ${${BOARD_ID}.upload.tool})
     endif()
-
-    message(" - XXX " UPLOAD_TOOL)
 
     find_program(UPLOAD_PROGRAM
         NAMES ${UPLOAD_TOOL}
@@ -1091,6 +1089,164 @@ function(PRINT_LIST SETTINGS_LIST)
 endfunction()
 
 
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# setup_energia_sketch(TARGET_NAME SKETCH_PATH OUTPUT_VAR)
+#
+#      TARGET_NAME - Target name
+#      SKETCH_PATH - Path to sketch directory
+#      OUTPUT_VAR  - Variable name where to save generated sketch source
+#
+# Generates C++ sources from Arduino Sketch.
+#=============================================================================#
+function(SETUP_ENERGIA_SKETCH TARGET_NAME SKETCH_PATH OUTPUT_VAR)
+    get_filename_component(SKETCH_NAME "${SKETCH_PATH}" NAME)
+    get_filename_component(SKETCH_PATH "${SKETCH_PATH}" ABSOLUTE)
+
+    if(EXISTS "${SKETCH_PATH}")
+        set(SKETCH_CPP  ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}_${SKETCH_NAME}.cpp)
+
+        if (IS_DIRECTORY "${SKETCH_PATH}")
+            # Sketch directory specified, try to find main sketch...
+            set(MAIN_SKETCH ${SKETCH_PATH}/${SKETCH_NAME})
+
+            if(EXISTS "${MAIN_SKETCH}.pde")
+                set(MAIN_SKETCH "${MAIN_SKETCH}.pde")
+            elseif(EXISTS "${MAIN_SKETCH}.ino")
+                set(MAIN_SKETCH "${MAIN_SKETCH}.ino")
+            else()
+                message(FATAL_ERROR "Could not find main sketch (${SKETCH_NAME}.pde or ${SKETCH_NAME}.ino) at ${SKETCH_PATH}! Please specify the main sketch file path instead of directory.")
+            endif()
+        else()
+            # Sektch file specified, assuming parent directory as sketch directory
+            set(MAIN_SKETCH ${SKETCH_PATH})
+            get_filename_component(SKETCH_PATH "${SKETCH_PATH}" PATH)
+        endif()
+        energia_debug_msg("sketch: ${MAIN_SKETCH}")
+
+        # Find all sketch files
+        file(GLOB SKETCH_SOURCES ${SKETCH_PATH}/*.pde ${SKETCH_PATH}/*.ino)
+        list(REMOVE_ITEM SKETCH_SOURCES ${MAIN_SKETCH})
+        list(SORT SKETCH_SOURCES)
+
+        generate_cpp_from_sketch("${MAIN_SKETCH}" "${SKETCH_SOURCES}" "${SKETCH_CPP}")
+
+        # Regenerate build system if sketch changes
+        add_custom_command(OUTPUT ${SKETCH_CPP}
+                           COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR}
+                           WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                           DEPENDS ${MAIN_SKETCH} ${SKETCH_SOURCES}
+                           COMMENT "Regnerating ${SKETCH_NAME} Sketch")
+        set_source_files_properties(${SKETCH_CPP} PROPERTIES GENERATED TRUE)
+        # Mark file that it exists for find_file
+        set_source_files_properties(${SKETCH_CPP} PROPERTIES GENERATED_SKETCH TRUE)
+
+        set("${OUTPUT_VAR}" ${${OUTPUT_VAR}} ${SKETCH_CPP} PARENT_SCOPE)
+    else()
+        message(FATAL_ERROR "Sketch does not exist: ${SKETCH_PATH}")
+    endif()
+endfunction()
+
+
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# generate_cpp_from_sketch(MAIN_SKETCH_PATH SKETCH_SOURCES SKETCH_CPP)
+#
+#         MAIN_SKETCH_PATH - Main sketch file path
+#         SKETCH_SOURCES   - Setch source paths
+#         SKETCH_CPP       - Name of file to generate
+#
+# Generate C++ source file from Arduino sketch files.
+#=============================================================================#
+function(GENERATE_CPP_FROM_SKETCH MAIN_SKETCH_PATH SKETCH_SOURCES SKETCH_CPP)
+    file(WRITE ${SKETCH_CPP} "// automatically generated by energia-cmake\n")
+    file(READ  ${MAIN_SKETCH_PATH} MAIN_SKETCH)
+
+    # remove comments
+    remove_comments(MAIN_SKETCH MAIN_SKETCH_NO_COMMENTS)
+
+    # find first statement
+    string(REGEX MATCH "[\n][_a-zA-Z0-9]+[^\n]*" FIRST_STATEMENT "${MAIN_SKETCH_NO_COMMENTS}")
+    string(FIND "${MAIN_SKETCH}" "${FIRST_STATEMENT}" HEAD_LENGTH)
+    if ("${HEAD_LENGTH}" STREQUAL "-1")
+        set(HEAD_LENGTH 0)
+    endif()
+    #message(STATUS "FIRST STATEMENT: ${FIRST_STATEMENT}")
+    #message(STATUS "FIRST STATEMENT POSITION: ${HEAD_LENGTH}")
+    string(LENGTH "${MAIN_SKETCH}" MAIN_SKETCH_LENGTH)
+
+    string(SUBSTRING "${MAIN_SKETCH}" 0 ${HEAD_LENGTH} SKETCH_HEAD)
+    #energia_debug_msg("SKETCH_HEAD:\n${SKETCH_HEAD}")
+
+    # find the body of the main pde
+    math(EXPR BODY_LENGTH "${MAIN_SKETCH_LENGTH}-${HEAD_LENGTH}")
+    string(SUBSTRING "${MAIN_SKETCH}" "${HEAD_LENGTH}+1" "${BODY_LENGTH}-1" SKETCH_BODY)
+    #energia_debug_msg("BODY:\n${SKETCH_BODY}")
+
+    # write the file head
+    file(APPEND ${SKETCH_CPP} "#line 1 \"${MAIN_SKETCH_PATH}\"\n${SKETCH_HEAD}")
+
+    # Count head line offset (for GCC error reporting)
+    file(STRINGS ${SKETCH_CPP} SKETCH_HEAD_LINES)
+    list(LENGTH SKETCH_HEAD_LINES SKETCH_HEAD_LINES_COUNT)
+    math(EXPR SKETCH_HEAD_OFFSET "${SKETCH_HEAD_LINES_COUNT}+2")
+
+    # add energia include header
+    #file(APPEND ${SKETCH_CPP} "\n#line 1 \"autogenerated\"\n")
+    file(APPEND ${SKETCH_CPP} "\n#line ${SKETCH_HEAD_OFFSET} \"${SKETCH_CPP}\"\n")
+    file(APPEND ${SKETCH_CPP} "#include \"Arduino.h\"\n")
+
+    # add function prototypes
+    foreach(SKETCH_SOURCE_PATH ${SKETCH_SOURCES} ${MAIN_SKETCH_PATH})
+        energia_debug_msg("Sketch: ${SKETCH_SOURCE_PATH}")
+        file(READ ${SKETCH_SOURCE_PATH} SKETCH_SOURCE)
+        remove_comments(SKETCH_SOURCE SKETCH_SOURCE)
+
+        set(ALPHA "a-zA-Z")
+        set(NUM "0-9")
+        set(ALPHANUM "${ALPHA}${NUM}")
+        set(WORD "_${ALPHANUM}")
+        set(LINE_START "(^|[\n])")
+        set(QUALIFIERS "[ \t]*([${ALPHA}]+[ ])*")
+        set(TYPE "[${WORD}]+([ ]*[\n][\t]*|[ ])+")
+        set(FNAME "[${WORD}]+[ ]?[\n]?[\t]*[ ]*")
+        set(FARGS "[(]([\t]*[ ]*[*&]?[ ]?[${WORD}](\\[([${NUM}]+)?\\])*[,]?[ ]*[\n]?)*([,]?[ ]*[\n]?)?[)]")
+        set(BODY_START "([ ]*[\n][\t]*|[ ]|[\n])*{")
+        set(PROTOTYPE_PATTERN "${LINE_START}${QUALIFIERS}${TYPE}${FNAME}${FARGS}${BODY_START}")
+
+        string(REGEX MATCHALL "${PROTOTYPE_PATTERN}" SKETCH_PROTOTYPES "${SKETCH_SOURCE}")
+
+        # Write function prototypes
+        file(APPEND ${SKETCH_CPP} "\n//=== START Forward: ${SKETCH_SOURCE_PATH}\n")
+        foreach(SKETCH_PROTOTYPE ${SKETCH_PROTOTYPES})
+            string(REPLACE "\n" " " SKETCH_PROTOTYPE "${SKETCH_PROTOTYPE}")
+            string(REPLACE "{" "" SKETCH_PROTOTYPE "${SKETCH_PROTOTYPE}")
+            energia_debug_msg("\tprototype: ${SKETCH_PROTOTYPE};")
+            # " else if(var == other) {" shoudn't be listed as prototype
+            if(NOT SKETCH_PROTOTYPE MATCHES "(if[ ]?[\n]?[\t]*[ ]*[(])")
+                file(APPEND ${SKETCH_CPP} "${SKETCH_PROTOTYPE};\n")
+            else()
+                energia_debug_msg("\trejected prototype: ${SKETCH_PROTOTYPE};")
+            endif()
+        endforeach()
+		file(APPEND ${SKETCH_CPP} "//=== END Forward: ${SKETCH_SOURCE_PATH}\n")
+    endforeach()
+
+    # Write Sketch CPP source
+    get_num_lines("${SKETCH_HEAD}" HEAD_NUM_LINES)
+    file(APPEND ${SKETCH_CPP} "#line ${HEAD_NUM_LINES} \"${MAIN_SKETCH_PATH}\"\n")
+    file(APPEND ${SKETCH_CPP} "\n${SKETCH_BODY}")
+    foreach (SKETCH_SOURCE_PATH ${SKETCH_SOURCES})
+        file(READ ${SKETCH_SOURCE_PATH} SKETCH_SOURCE)
+        file(APPEND ${SKETCH_CPP} "\n//=== START : ${SKETCH_SOURCE_PATH}\n")
+        file(APPEND ${SKETCH_CPP} "#line 1 \"${SKETCH_SOURCE_PATH}\"\n")
+        file(APPEND ${SKETCH_CPP} "${SKETCH_SOURCE}")
+        file(APPEND ${SKETCH_CPP} "\n//=== END : ${SKETCH_SOURCE_PATH}\n")
+    endforeach()
+endfunction()
 
 
 #=============================================================================#
