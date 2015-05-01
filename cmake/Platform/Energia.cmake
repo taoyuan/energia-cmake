@@ -863,24 +863,18 @@ function(setup_energia_target TARGET_NAME BOARD_ID ALL_SRCS ALL_LIBS COMPILE_FLA
 
     # Display target size
     # TODO
-#    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-#                        COMMAND ${CMAKE_COMMAND}
-#                        ARGS    -DFIRMWARE_IMAGE=${TARGET_PATH}.elf
-#                                -DMCU=${${BOARD_ID}.build.mcu}
-#                                -DEEPROM_IMAGE=${TARGET_PATH}.eep
-#                                -P ${ENERGIA_SIZE_SCRIPT}
-#                        COMMENT "Calculating image size"
-#                        VERBATIM)
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                        COMMAND ${SIZE_PROGRAM}
+                        ARGS    ${TARGET_PATH}.elf
+                        COMMENT "Calculating image size"
+                        VERBATIM)
 
     # Create ${TARGET_NAME}-size target
-#    add_custom_target(${TARGET_NAME}-size
-#                        COMMAND ${CMAKE_COMMAND}
-#                                -DFIRMWARE_IMAGE=${TARGET_PATH}.elf
-#                                -DMCU=${${BOARD_ID}.build.mcu}
-#                                -DEEPROM_IMAGE=${TARGET_PATH}.eep
-#                                -P ${ENERGIA_SIZE_SCRIPT}
-#                        DEPENDS ${TARGET_NAME}
-#                        COMMENT "Calculating ${TARGET_NAME} image size")
+    add_custom_target(${TARGET_NAME}-size
+                        COMMAND ${SIZE_PROGRAM}
+                                ${TARGET_PATH}.elf
+                        DEPENDS ${TARGET_NAME}
+                        COMMENT "Calculating ${TARGET_NAME} image size")
 
 endfunction()
 
