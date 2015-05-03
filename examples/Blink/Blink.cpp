@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "WiFi.h"
+#include "ArduinoMQTT.h"
 
 /*
   Blink
@@ -23,6 +24,10 @@
 void setup() {
     // initialize the digital pin as an output.
     pinMode(LED, OUTPUT);
+
+    WiFiClient client;
+    MQTTClient<> mqtt(client);
+    mqtt.connect();
 }
 
 // the loop routine runs over and over again forever:

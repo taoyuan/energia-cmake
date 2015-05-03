@@ -175,7 +175,7 @@ function(GENERATE_ENERGIA_FIRMWARE INPUT_NAME)
 
     foreach(LIB_DEP ${TARGET_LIBS})
         energia_debug_msg("Energia Library: ${LIB_DEP}")
-        set(LIB_DEP_INCLUDES "${LIB_DEP_INCLUDES} -I\"${LIB_DEP}\" -I\"${LIB_DEP}/utility\"")
+        set(LIB_DEP_INCLUDES "${LIB_DEP_INCLUDES} -I\"${LIB_DEP}\"")
     endforeach()
 
     if(NOT INPUT_NO_AUTOLIBS)
@@ -271,7 +271,6 @@ endfunction()
 #=============================================================================#
 function(find_sources VAR_NAME LIB_PATH RECURSE)
     set(FILE_SEARCH_LIST
-        ${LIB_PATH}/*.ino
         ${LIB_PATH}/*.cpp
         ${LIB_PATH}/*.c
         ${LIB_PATH}/*.cc
@@ -728,7 +727,8 @@ set(Wire_RECURSE True)
 set(Ethernet_RECURSE True)
 set(SD_RECURSE True)
 set(WiFi_RECURSE True)
-#set(OxMqtt_RECURSE True)
+set(Oxino_RECURSE True)
+set(ArduinoMQTT_RECURSE True)
 function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLAGS)
     set(LIB_TARGETS)
     set(LIB_INCLUDES)
