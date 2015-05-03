@@ -256,6 +256,25 @@ function(LOAD_GENERATOR_SETTINGS TARGET_NAME PREFIX)
     endforeach()
 endfunction()
 
+#=============================================================================#
+# [PRIVATE/INTERNAL]
+#
+# find_library_sources(VAR_NAME LIB_PATH)
+#
+#        VAR_NAME - Variable name that will hold the detected sources
+#        LIB_PATH - The base path
+#
+# Finds all C/C++ sources located at the specified path.
+#
+#=============================================================================#
+function(find_library_sources VAR_NAME LIB_PATH)
+    find_sources(FILES1 ${LIB_PATH} false)
+    find_sources(FILES2 ${LIB_PATH}/src true)
+    find_sources(FILES3 ${LIB_PATH}/utility true)
+
+    set(${VAR_NAME} ${FILES1} ${FILES2} ${FILES3} PARENT_SCOPE)
+
+endfunction()
 
 #=============================================================================#
 # [PRIVATE/INTERNAL]
@@ -723,12 +742,12 @@ endfunction()
 #=============================================================================#
 
 # For known libraries can list recurse here
-set(Wire_RECURSE True)
-set(Ethernet_RECURSE True)
-set(SD_RECURSE True)
-set(WiFi_RECURSE True)
-set(Oxino_RECURSE True)
-set(ArduinoMQTT_RECURSE True)
+#set(Wire_RECURSE True)
+#set(Ethernet_RECURSE True)
+#set(SD_RECURSE True)
+#set(WiFi_RECURSE True)
+#set(Oxino_RECURSE True)
+#set(ArduinoMQTT_RECURSE True)
 function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLAGS)
     set(LIB_TARGETS)
     set(LIB_INCLUDES)
@@ -744,7 +763,9 @@ function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLA
             set(${LIB_SHORT_NAME}_RECURSE False)
         endif()
 
-        find_sources(LIB_SRCS ${LIB_PATH} ${${LIB_SHORT_NAME}_RECURSE})
+#        find_sources(LIB_SRCS ${LIB_PATH} ${${LIB_SHORT_NAME}_RECURSE})
+
+        find_library_sources(LIB_SRCS ${LIB_PATH})
         if(LIB_SRCS)
 
             energia_debug_msg("Generating Energia ${LIB_NAME} library")
