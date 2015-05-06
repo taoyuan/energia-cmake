@@ -59,6 +59,7 @@ if(NOT ENERGIA_SDK_PATH)
     elseif(WIN32)
         set(SDK_PATH_HINTS "C:\\Program Files\\Energia"
             "C:\\Program Files (x86)\\Energia"
+            "C:\\Energia"
             )
     endif()
     list(SORT SDK_PATH_HINTS)
