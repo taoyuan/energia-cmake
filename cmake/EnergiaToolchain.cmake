@@ -57,7 +57,8 @@ if(NOT ENERGIA_SDK_PATH)
             /opt/energia*
             /usr/local/share/energia*)
     elseif(WIN32)
-        set(SDK_PATH_HINTS "C:\\Program Files\\Energia"
+        set(SDK_PATH_HINTS
+            "C:\\Program Files\\Energia"
             "C:\\Program Files (x86)\\Energia"
             )
     endif()
