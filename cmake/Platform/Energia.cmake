@@ -186,7 +186,12 @@ function(GENERATE_ENERGIA_FIRMWARE INPUT_NAME)
         endforeach()
     endif()
 
-    list(APPEND ALL_LIBS ${CORE_LIB} ${INPUT_LIBS})
+#    list(APPEND ALL_LIBS ${CORE_LIB} ${INPUT_LIBS})
+
+#    setup_energia_target(${INPUT_NAME} ${INPUT_BOARD} "${ALL_SRCS}" "${ALL_LIBS}" "${LIB_DEP_INCLUDES}" "" "${INPUT_MANUAL}")
+
+    list(APPEND ALL_LIBS ${CORE_LIB})
+    set(ALL_SRCS ${ALL_SRCS} ${ALL_LIBS_SOURCES})
 
     setup_energia_target(${INPUT_NAME} ${INPUT_BOARD} "${ALL_SRCS}" "${ALL_LIBS}" "${LIB_DEP_INCLUDES}" "" "${INPUT_MANUAL}")
 
@@ -269,7 +274,8 @@ endfunction()
 #=============================================================================#
 function(find_library_sources VAR_NAME LIB_PATH)
     find_sources(FILES1 ${LIB_PATH} false)
-    find_sources(FILES2 ${LIB_PATH}/src true)
+    # TODO
+#    find_sources(FILES2 ${LIB_PATH}/src true)
     find_sources(FILES3 ${LIB_PATH}/utility true)
 
     set(${VAR_NAME} ${FILES1} ${FILES2} ${FILES3} PARENT_SCOPE)
@@ -751,6 +757,7 @@ endfunction()
 function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLAGS)
     set(LIB_TARGETS)
     set(LIB_INCLUDES)
+    set(LIB_SOURCES)
 
     get_filename_component(LIB_NAME ${LIB_PATH} NAME)
 
@@ -763,11 +770,8 @@ function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLA
             set(${LIB_SHORT_NAME}_RECURSE False)
         endif()
 
-#        find_sources(LIB_SRCS ${LIB_PATH} ${${LIB_SHORT_NAME}_RECURSE})
-
         find_library_sources(LIB_SRCS ${LIB_PATH})
         if(LIB_SRCS)
-
             energia_debug_msg("Generating Energia ${LIB_NAME} library")
 
             add_library(${TARGET_LIB_NAME} STATIC ${LIB_SRCS})
@@ -777,9 +781,10 @@ function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLA
             find_energia_libraries(LIB_DEPS "${LIB_SRCS}" "")
 
             foreach(LIB_DEP ${LIB_DEPS})
-                setup_energia_library(DEP_LIB_SRCS ${BOARD_ID} ${LIB_DEP} "${COMPILE_FLAGS}" "${LINK_FLAGS}")
-                list(APPEND LIB_TARGETS ${DEP_LIB_SRCS})
-                list(APPEND LIB_INCLUDES ${DEP_LIB_SRCS_INCLUDES})
+                setup_energia_library(DEP_LIB ${BOARD_ID} ${LIB_DEP} "${COMPILE_FLAGS}" "${LINK_FLAGS}")
+                list(APPEND LIB_TARGETS ${DEP_LIB})
+                list(APPEND LIB_INCLUDES ${DEP_LIB_INCLUDES})
+                list(APPEND LIB_SOURCES ${DEP_LIB_SOURCES})
             endforeach()
 
             if (LIB_INCLUDES)
@@ -793,7 +798,7 @@ function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLA
 
             target_link_libraries(${TARGET_LIB_NAME} ${BOARD_ID}_CORE)
             list(APPEND LIB_TARGETS ${TARGET_LIB_NAME})
-
+            list(APPEND LIB_SOURCES ${LIB_SRCS})
         endif()
     else()
         # Target already exists, skiping creating
@@ -804,6 +809,7 @@ function(setup_energia_library VAR_NAME BOARD_ID LIB_PATH COMPILE_FLAGS LINK_FLA
     endif()
     set(${VAR_NAME}          ${LIB_TARGETS}  PARENT_SCOPE)
     set(${VAR_NAME}_INCLUDES ${LIB_INCLUDES} PARENT_SCOPE)
+    set(${VAR_NAME}_SOURCES  ${LIB_SOURCES}  PARENT_SCOPE)
 endfunction()
 
 #=============================================================================#
@@ -824,6 +830,7 @@ function(setup_energia_libraries VAR_NAME BOARD_ID SRCS ARDLIBS COMPILE_FLAGS LI
     set(LIB_TARGETS)
     set(LIB_INCLUDES)
     set(LIB_DIRS)
+    set(LIB_SOURCES)
 
     find_energia_libraries(TARGET_LIBS "${SRCS}" ARDLIBS)
     foreach(TARGET_LIB ${TARGET_LIBS})
@@ -832,11 +839,12 @@ function(setup_energia_libraries VAR_NAME BOARD_ID SRCS ARDLIBS COMPILE_FLAGS LI
         list(APPEND LIB_TARGETS ${LIB_DEPS})
         list(APPEND LIB_INCLUDES ${LIB_DEPS_INCLUDES})
         list(APPEND LIB_DIRS ${TARGET_LIB})
+        list(APPEND LIB_SOURCES ${LIB_DEPS_SOURCES})
     endforeach()
 
     set(${VAR_NAME}          ${LIB_TARGETS}  PARENT_SCOPE)
     set(${VAR_NAME}_INCLUDES ${LIB_INCLUDES} PARENT_SCOPE)
-
+    set(${VAR_NAME}_SOURCES  ${LIB_SOURCES} PARENT_SCOPE)
 endfunction()
 
 
